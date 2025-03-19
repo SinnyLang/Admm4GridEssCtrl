@@ -1,28 +1,49 @@
 import numpy as np
 from scipy.optimize import minimize
-# code from deepseek
+
+import makeYbus
+from case14 import case14  # 导入 IEEE 14 节点数据
+
+
+# 加载 IEEE 14 节点数据
+ppc = case14()
+
+# 提取数据
+baseMVA = ppc["baseMVA"]  # 系统基准功率
+bus = ppc["bus"]  # 节点数据
+gen = ppc["gen"]  # 发电机数据
+branch = ppc["branch"]  # 线路数据
 
 # 参数设置
-num_nodes = 3  # 节点数量
-num_lines = 3  # 线路数量
+num_nodes = bus.shape[0]  # 节点数量
+num_lines = branch.shape[0]  # 线路数量
 rho = 1.0  # ADMM惩罚参数
 max_iter = 100  # 最大迭代次数
 epsilon = 1e-4  # 收敛阈值
 
-# 节点数据
-P_gen = np.array([0.5, 0.3, 0.2])  # 发电量
-P_load = np.array([0.4, 0.2, 0.1])  # 负荷
-Q_gen = np.array([0.1, 0.05, 0.05])  # 无功发电量
-Q_load = np.array([0.05, 0.02, 0.01])  # 无功负荷
-V = np.ones(num_nodes)  # 电压幅值
-theta = np.zeros(num_nodes)  # 相位角
-
-# 线路数据
-G = np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]])  # 电导
-B = np.array([[0, -2, -2], [-2, 0, -2], [-2, -2, 0]])  # 电纳
-S_max = np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]])  # 线路容量
-
 # 初始化变量
+P_gen = gen[:, 1] / baseMVA  # 发电机有功出力（标幺值）
+Q_gen = gen[:, 2] / baseMVA  # 发电机无功出力（标幺值）
+V = bus[:, 7]  # 节点电压幅值（标幺值）
+theta = np.radians(bus[:, 8])  # 节点电压相角（弧度）
+
+# todo make type of Ybus from csc_matrix to ndarray
+Ybus, _, _ = makeYbus.makeYbus(baseMVA, bus, branch)
+
+# 线路参数
+G = np.zeros((num_nodes, num_nodes))  # 电导矩阵
+B = np.zeros((num_nodes, num_nodes))  # 电纳矩阵
+for line in branch:
+    fbus = int(line[0]) - 1  # 起始节点（Python索引从0开始）
+    tbus = int(line[1]) - 1  # 终止节点
+    r = line[2]  # 电阻
+    x = line[3]  # 电抗
+    G[fbus, tbus] = r / (r**2 + x**2)
+    B[fbus, tbus] = -x / (r**2 + x**2)
+    G[tbus, fbus] = G[fbus, tbus]
+    B[tbus, fbus] = B[fbus, tbus]
+
+# 初始化 ADMM 变量
 P_ij = np.zeros((num_nodes, num_nodes))  # 有功功率流
 Q_ij = np.zeros((num_nodes, num_nodes))  # 无功功率流
 z_P = np.zeros((num_nodes, num_nodes))  # 全局有功功率流
@@ -56,8 +77,8 @@ def constraints(x, i):
     P_gen_i, Q_gen_i, V_i, theta_i = x
     cons = []
     # 功率平衡约束
-    P_balance = P_gen_i - P_load[i]
-    Q_balance = Q_gen_i - Q_load[i]
+    P_balance = P_gen_i - bus[i, 2] / baseMVA  # 负荷有功
+    Q_balance = Q_gen_i - bus[i, 3] / baseMVA  # 负荷无功
     for j in range(num_nodes):
         if j != i:
             P_ij, Q_ij = power_flow(V, theta, G, B, i, j)
@@ -90,8 +111,8 @@ for k in range(max_iter):
         for j in range(num_nodes):
             if j != i:
                 P_ij[i, j], Q_ij[i, j] = power_flow(V, theta, G, B, i, j)
-                z_P[i, j] = np.clip(P_ij[i, j] + u_P[i, j] / rho, -S_max[i, j], S_max[i, j])
-                z_Q[i, j] = np.clip(Q_ij[i, j] + u_Q[i, j] / rho, -S_max[i, j], S_max[i, j])
+                z_P[i, j] = np.clip(P_ij[i, j] + u_P[i, j] / rho, -branch[i, 5] / baseMVA, branch[i, 5] / baseMVA)
+                z_Q[i, j] = np.clip(Q_ij[i, j] + u_Q[i, j] / rho, -branch[i, 5] / baseMVA, branch[i, 5] / baseMVA)
 
     # 对偶变量更新
     for i in range(num_nodes):
@@ -108,9 +129,21 @@ for k in range(max_iter):
         break
 
 # 输出结果
-print("P_gen:", P_gen)
-print("Q_gen:", Q_gen)
-print("V:", V)
-print("theta:", theta)
-print("P_ij:", P_ij)
-print("Q_ij:", Q_ij)
+print("发电机出力：")
+for i in range(num_nodes):
+    print(f"节点 {i + 1}: P_gen = {P_gen[i] * baseMVA:.2f} MW, Q_gen = {Q_gen[i] * baseMVA:.2f} MVAR")
+
+print("\n节点电压：")
+for i in range(num_nodes):
+    print(f"节点 {i + 1}: Vm = {V[i]:.4f} pu, Va = {np.degrees(theta[i]):.4f} deg")
+
+print("\n线路潮流：")
+for i in range(num_lines):
+    fbus = int(branch[i, 0]) - 1
+    tbus = int(branch[i, 1]) - 1
+    P_from = P_ij[fbus, tbus] * baseMVA
+    Q_from = Q_ij[fbus, tbus] * baseMVA
+    P_to = P_ij[tbus, fbus] * baseMVA
+    Q_to = Q_ij[tbus, fbus] * baseMVA
+    print(f"线路 {fbus + 1} -> {tbus + 1}: P_from = {P_from:.2f} MW, Q_from = {Q_from:.2f} MVAR, "
+          f"P_to = {P_to:.2f} MW, Q_to = {Q_to:.2f} MVAR")
