@@ -5,7 +5,7 @@
 """Power flow data for IEEE 14 bus test case.
 """
 
-from numpy import array
+from numpy import  array
 
 def case14():
     """Power flow data for IEEE 14 bus test case.
