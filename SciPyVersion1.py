@@ -46,6 +46,7 @@ def constraints(x):
         cons.append({'type': 'eq', 'fun': lambda x, i=i: Q[i] - np.sum(Q_ij[i, :])})
 
     # Line power flow limits: ensure flows do not exceed capacity
+    # todo define constant S_max for every line
     for i in range(num_nodes):
         for j in range(num_nodes):
             if i != j:
