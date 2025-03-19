@@ -27,15 +27,15 @@ Q_gen = gen[:, 2] / baseMVA  # 发电机无功出力（标幺值）
 V = bus[:, 7]  # 节点电压幅值（标幺值）
 theta = np.radians(bus[:, 8])  # 节点电压相角（弧度）
 
-# todo make type of Ybus from csc_matrix to ndarray
-Ybus, _, _ = makeYbus.makeYbus(baseMVA, bus, branch)
+csc_Ybus, _, _ = makeYbus.makeYbus(baseMVA, bus, branch)
+Ybus = csc_Ybus.toarray()
 
 # 线路参数
 G = np.zeros((num_nodes, num_nodes))  # 电导矩阵
 B = np.zeros((num_nodes, num_nodes))  # 电纳矩阵
 for line in branch:
-    fbus = int(line[0]) - 1  # 起始节点（Python索引从0开始）
-    tbus = int(line[1]) - 1  # 终止节点
+    fbus = int(line[0])   # 起始节点（Python索引从0开始）
+    tbus = int(line[1])   # 终止节点
     r = line[2]  # 电阻
     x = line[3]  # 电抗
     G[fbus, tbus] = r / (r**2 + x**2)
@@ -100,6 +100,8 @@ for k in range(max_iter):
     z_Q_prev = z_Q.copy()
 
     # 本地优化
+    # todo fix obj bug or constraints bug,
+    #  since minimize() computes false, statue 6, message 'Singular matrix C in LSQ subproblem'
     for i in range(num_nodes):
         x0 = np.array([P_gen[i], Q_gen[i], V[i], theta[i]])
         res = minimize(local_optimization, x0, args=(i, z_P, z_Q, u_P, u_Q, rho),
@@ -139,8 +141,8 @@ for i in range(num_nodes):
 
 print("\n线路潮流：")
 for i in range(num_lines):
-    fbus = int(branch[i, 0]) - 1
-    tbus = int(branch[i, 1]) - 1
+    fbus = int(branch[i, 0])
+    tbus = int(branch[i, 1])
     P_from = P_ij[fbus, tbus] * baseMVA
     Q_from = Q_ij[fbus, tbus] * baseMVA
     P_to = P_ij[tbus, fbus] * baseMVA
